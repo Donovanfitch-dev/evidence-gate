@@ -1,0 +1,22 @@
+{
+  "version": 1,
+  "name": "service-release",
+  "requirements": [
+    { "id": "tests-pass", "description": "The test suite passed on this revision", "kind": "ci.tests" },
+    { "id": "lint-pass", "description": "Static checks passed on this revision", "kind": "ci.lint" },
+    { "id": "review-approved", "description": "Two different people approved the change", "kind": "review.approval", "minDistinctActors": 2 },
+    { "id": "dependency-scan", "description": "Dependency scan is clean and no older than a day", "kind": "scan.dependencies", "maxAgeMinutes": 1440, "onConflict": "unmet" },
+    { "id": "staging-healthy", "description": "Staging health check passed in the last two hours", "kind": "deploy.staging-health", "maxAgeMinutes": 120 },
+    { "id": "canary-healthy", "description": "Canary health check passed in the last two hours", "kind": "deploy.canary-health", "maxAgeMinutes": 120 },
+    { "id": "changelog-updated", "description": "The changelog mentions this change", "kind": "docs.changelog" }
+  ],
+  "gate": {
+    "all": [
+      { "req": "tests-pass" },
+      { "req": "lint-pass" },
+      { "req": "review-approved" },
+      { "req": "dependency-scan" },
+      { "any": [{ "req": "staging-healthy" }, { "req": "canary-healthy" }] }
+    ]
+  }
+}

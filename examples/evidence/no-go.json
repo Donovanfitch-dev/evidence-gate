@@ -1,0 +1,5 @@
+[
+  { "id": "ev-101", "kind": "ci.tests", "revision": "4be1c02", "outcome": "fail", "observedAt": "2026-03-02T09:40:00Z", "source": "ci/main-pipeline", "detail": "3 failing tests" },
+  { "id": "ev-102", "kind": "ci.lint", "revision": "4be1c02", "outcome": "pass", "observedAt": "2026-03-02T09:12:00Z", "source": "ci/main-pipeline" },
+  { "id": "ev-103", "kind": "review.approval", "revision": "4be1c02", "outcome": "pass", "observedAt": "2026-03-02T10:05:00Z", "source": "code-review", "actor": "reviewer-ana" }
+]

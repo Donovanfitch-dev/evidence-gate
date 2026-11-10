@@ -1,0 +1,35 @@
+{
+  "name": "evidence-gate",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Release readiness decided from evidence, with three-valued verdicts: GO, NO_GO, or UNDETERMINED.",
+  "license": "MIT",
+  "author": "Donovan Fitch",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "exports": { ".": { "types": "./dist/index.d.ts", "default": "./dist/index.js" } },
+  "bin": {
+    "evidence-gate": "dist/cli.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint .",
+    "test": "vitest run",
+    "gate": "tsx src/cli.ts"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@types/node": "^22.20.5",
+    "eslint": "^10.14.0",
+    "tsx": "^4.23.15",
+    "typescript": "^6.0.0",
+    "typescript-eslint": "^8.72.2",
+    "vitest": "^5.1.0"
+  }
+}

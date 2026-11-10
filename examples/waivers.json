@@ -1,0 +1,9 @@
+[
+  {
+    "requirementId": "dependency-scan",
+    "revision": "4be1c02",
+    "reason": "Scanner is offline for maintenance; last clean scan was three days ago and no dependencies changed",
+    "approvedBy": "release-manager-cy",
+    "expiresAt": "2026-03-03T00:00:00Z"
+  }
+]
