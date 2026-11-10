@@ -37,6 +37,9 @@ describe("parsePolicy", () => {
     ["a zero actor count", policy({ requirements: [{ ...requirement, minDistinctActors: 0 }] }), /positive integer/],
     ["an invalid conflict mode", policy({ requirements: [{ ...requirement, onConflict: "pass" }] }), /onConflict/],
     ["a missing gate", policy({ gate: undefined }), /policy\.gate/],
+    ["a misspelled requirement key, which would silently drop the rule", policy({ requirements: [{ ...requirement, minDistinctActor: 2 }] }), /unknown key "minDistinctActor"/],
+    ["a misspelled freshness key", policy({ requirements: [{ ...requirement, maxAgeMinute: 60 }] }), /unknown key "maxAgeMinute"/],
+    ["an unknown top-level key", policy({ gates: { req: "r" } }), /unknown key "gates"/],
   ])("rejects %s", (_label, raw, message) => {
     expect(() => parsePolicy(raw)).toThrow(InputError);
     expect(() => parsePolicy(raw)).toThrow(message);
@@ -54,6 +57,7 @@ describe("parseEvidence", () => {
     ["a timestamp with no UTC offset", evidence({ observedAt: "2026-03-02T11:00:00" }), /UTC offset/],
     ["a date that is not an instant", evidence({ observedAt: "yesterday" }), /UTC offset/],
     ["a non-object", "pass", /expected an object/],
+    ["an unknown key", evidence({ actr: "ana" }), /unknown key "actr"/],
   ])("rejects %s", (_label, raw, message) => {
     expect(() => parseEvidence(raw)).toThrow(message);
   });
@@ -69,5 +73,10 @@ describe("parseWaivers", () => {
     const waiver = { requirementId: "r", revision: "4be1c02", reason: "x", expiresAt: "2026-03-03T00:00:00Z" };
     expect(() => parseWaivers([waiver])).toThrow(/approvedBy/);
     expect(parseWaivers([{ ...waiver, approvedBy: "cy" }])).toHaveLength(1);
+  });
+
+  it("rejects unknown keys", () => {
+    const waiver = { requirementId: "r", revision: "4be1c02", reason: "x", approvedBy: "cy", expiresAt: "2026-03-03T00:00:00Z" };
+    expect(() => parseWaivers([{ ...waiver, expires: "never" }])).toThrow(/unknown key "expires"/);
   });
 });

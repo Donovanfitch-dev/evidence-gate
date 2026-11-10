@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { all, any, not, type Tri } from "./tri.js";
+import { InputError } from "./validate.js";
 import type {
   Evidence,
   GateExpr,
@@ -33,8 +34,13 @@ function isNewer(a: Evidence, b: Evidence): boolean {
   return ta === tb ? a.id > b.id : ta > tb;
 }
 
+/** Code-unit order. Never `localeCompare`: its result depends on the machine's locale. */
+function byCodeUnit(a: string, b: string): number {
+  return a < b ? -1 : a > b ? 1 : 0;
+}
+
 function ids(items: readonly Evidence[]): string[] {
-  return items.map((e) => e.id).sort();
+  return items.map((e) => e.id).sort(byCodeUnit);
 }
 
 interface Assessment {
@@ -81,7 +87,7 @@ function assess(req: Requirement, evidence: readonly Evidence[], revision: strin
       ignored.push({ id: item.id, why: "superseded" });
     }
   }
-  ignored.sort((a, b) => a.id.localeCompare(b.id));
+  ignored.sort((a, b) => byCodeUnit(a.id, b.id));
 
   const current = [...latest.values()];
   const passes = current.filter((e) => e.outcome === "pass");
@@ -139,6 +145,35 @@ function evalGate(expr: GateExpr, states: ReadonlyMap<string, Tri>): Tri {
   return not(evalGate(expr.not, states));
 }
 
+/** Requirement ids that sit anywhere beneath a `not`. */
+function negated(expr: GateExpr, underNot = false, into = new Set<string>()): Set<string> {
+  if ("req" in expr) {
+    if (underNot) into.add(expr.req);
+  } else if ("all" in expr) expr.all.forEach((e) => negated(e, underNot, into));
+  else if ("any" in expr) expr.any.forEach((e) => negated(e, underNot, into));
+  else negated(expr.not, true, into);
+  return into;
+}
+
+/**
+ * A waiver means "treat this requirement as met". Two shapes make that meaningless or harmful,
+ * and both are rejected instead of being silently ignored or silently inverted.
+ */
+function checkWaivers(policy: Policy, waivers: readonly Waiver[]): void {
+  const known = new Set(policy.requirements.map((r) => r.id));
+  const underNot = negated(policy.gate);
+  for (const waiver of waivers) {
+    if (!known.has(waiver.requirementId)) {
+      throw new InputError(`waiver: unknown requirement "${waiver.requirementId}"`);
+    }
+    if (underNot.has(waiver.requirementId)) {
+      throw new InputError(
+        `waiver: requirement "${waiver.requirementId}" is negated by the gate, so treating it as met would block the release`,
+      );
+    }
+  }
+}
+
 function referenced(expr: GateExpr, into = new Set<string>()): Set<string> {
   if ("req" in expr) into.add(expr.req);
   else if ("all" in expr) expr.all.forEach((e) => referenced(e, into));
@@ -155,7 +190,7 @@ export function canonical(value: unknown): string {
   if (typeof value === "object" && value !== null) {
     const entries = Object.entries(value as Record<string, unknown>)
       .filter(([, v]) => v !== undefined)
-      .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
+      .sort(([a], [b]) => byCodeUnit(a, b));
     return `{${entries.map(([k, v]) => `${JSON.stringify(k)}:${canonical(v)}`).join(",")}}`;
   }
   return JSON.stringify(value);
@@ -165,7 +200,9 @@ export function evaluate(input: EvaluateInput): Report {
   const { policy, evidence, revision, now } = input;
   const waivers = input.waivers ?? [];
   const nowMs = now.getTime();
-  const skewMs = (input.clockSkewSeconds ?? 300) * 1000;
+  const clockSkewSeconds = input.clockSkewSeconds ?? 300;
+  const skewMs = clockSkewSeconds * 1000;
+  checkWaivers(policy, waivers);
 
   const results: RequirementResult[] = policy.requirements.map((req) => {
     const assessment = assess(req, evidence, revision, nowMs, skewMs);
@@ -179,9 +216,10 @@ export function evaluate(input: EvaluateInput): Report {
       basis: assessment.basis,
       ignored: assessment.ignored,
     };
-    const waiver = waivers.find(
-      (w) => w.requirementId === req.id && w.revision === revision && Date.parse(w.expiresAt) > nowMs,
-    );
+    // If several waivers apply, the one that lasts longest is reported, whatever order they came in.
+    const waiver = waivers
+      .filter((w) => w.requirementId === req.id && w.revision === revision && Date.parse(w.expiresAt) > nowMs)
+      .sort((a, b) => Date.parse(b.expiresAt) - Date.parse(a.expiresAt) || byCodeUnit(canonical(a), canonical(b)))[0];
     // A waiver never hides what the evidence says; it only changes what the gate does about it.
     if (waiver !== undefined && assessment.state !== "met") {
       result.state = "met";
@@ -200,8 +238,10 @@ export function evaluate(input: EvaluateInput): Report {
   const digestInput = {
     policy,
     revision,
-    evidence: [...evidence].sort((a, b) => a.id.localeCompare(b.id)),
-    waivers: [...waivers].sort((a, b) => canonical(a).localeCompare(canonical(b))),
+    evidence: [...evidence].sort((a, b) => byCodeUnit(a.id, b.id)),
+    waivers: [...waivers].sort((a, b) => byCodeUnit(canonical(a), canonical(b))),
+    // The skew allowance decides which records count as future-dated, so it is an input too.
+    clockSkewSeconds,
   };
 
   return {

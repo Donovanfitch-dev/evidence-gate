@@ -4,8 +4,8 @@ Decide whether a revision is ready to release from **evidence**, and answer with
 verdicts: `GO`, `NO_GO`, or `UNDETERMINED`.
 
 > An independent reference implementation, written from scratch for demonstration. It is not
-> extracted from any production system, and all example data is fictional. Built with AI coding
-> assistance (Claude Code).
+> extracted from any production system, and all example data is fictional. Implemented with AI coding
+> agents (Claude Code).
 
 ## The problem
 
@@ -35,12 +35,15 @@ why. "We cannot tell yet" becomes a result a pipeline can act on, separate from 
 - **Distinct actors.** "Two approvals" means two different people, counted by `actor`.
 - **Waivers are explicit.** A waiver names a requirement, a revision, an approver, a reason and an
   expiry. The report still shows what the evidence said and flags that the verdict depends on a
-  waiver.
+  waiver. A waiver that names an unknown requirement, or one the gate negates, is rejected.
+- **Strict inputs.** Unknown keys in a policy, evidence record or waiver are an error. A
+  misspelled `minDistinctActors` would otherwise remove the rule and let the gate pass.
 - **Every verdict is explained and reproducible.** The report cites the evidence ids each state
-  rests on, lists what was ignored and why, and carries a SHA-256 of its canonical inputs. The
-  clock is an input, so the same inputs always give the same report.
-- **Exit codes for CI.** `0` GO, `1` NO_GO, `2` UNDETERMINED, `3` invalid input. Malformed input is
-  never mistaken for a verdict.
+  rests on, lists what was ignored and why, and carries a SHA-256 of its canonical inputs
+  (policy, revision, evidence, waivers and the clock-skew allowance). The clock is an input, so
+  the same inputs at the same instant always give the same report.
+- **Exit codes for CI.** `0` GO, `1` NO_GO, `2` UNDETERMINED, `3` invalid input, `4` internal
+  error. Malformed input is never mistaken for a verdict.
 
 ## How evaluation works
 
@@ -123,13 +126,14 @@ To settle it:
   - staging-healthy: run the check against this exact revision
   - canary-healthy: collect this evidence for the revision
 
-inputs sha256  805a05ddf03fbde59bf35efb99ea90d3bc018be723b495545cb308495712f5e4
+inputs sha256  9da9b0e980cc0648b76452772fc7c540c4ee6f786710d4047b68cfe480648535
 ```
 
 Swap in `examples/evidence/go.json` (exit `0`) or `examples/evidence/no-go.json` (exit `1`) to see
 the other verdicts. Add `--format json` for the machine-readable report, and
 `--waivers examples/waivers.json` to apply a waiver. `--evidence` accepts a `.json` file, a
-`.jsonl` file or a directory of them, and can be repeated. Omit `--now` to use the current time.
+`.jsonl` file or a directory of them, and can be repeated. Omit `--now` to use the current time;
+when given, it must carry a UTC offset like every other instant.
 
 After `npm run build`, the same CLI is available as `node dist/cli.js`.
 
@@ -179,6 +183,9 @@ reasons about evidence age cannot work from an ambiguous instant.
 
 ## Use as a library
 
+The package is not published to a registry. Build it (`npm run build`) and import from `dist/`,
+or link it locally with `npm link`.
+
 ```ts
 import { evaluate, parsePolicy, parseEvidenceList } from "evidence-gate";
 
@@ -224,12 +231,12 @@ More detail is in [docs/design.md](docs/design.md).
 | Three-valued evaluation, gate expressions, advisory requirements | Implemented and tested |
 | Revision binding, evidence age, clock-skew handling, supersession, conflict modes | Implemented and tested |
 | Distinct-actor counting, waivers, reproducibility digest | Implemented and tested |
-| Input validation, CLI, text and JSON reports, exit codes | Implemented and tested |
+| Strict input validation, CLI, text and JSON reports, exit codes | Implemented and tested |
 | Collectors that produce evidence from a CI system or deploy platform | Not implemented. Evidence is supplied as JSON files |
 | Signed or attested evidence (verifying who really produced a record) | Conceptual. Records are trusted as given |
 | Persistent evidence store, history of past verdicts | Not implemented |
 
-Checked during the build with `npm run lint`, `npm run typecheck`, `npm test` (62 tests) and
+Checked during the build with `npm run lint`, `npm run typecheck`, `npm test` (76 tests) and
 `npm run build`.
 
 ## Limitations

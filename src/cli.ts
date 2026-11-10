@@ -6,21 +6,22 @@ import { parseArgs } from "node:util";
 import { evaluate } from "./evaluate.js";
 import { renderText } from "./render.js";
 import type { Evidence, Verdict } from "./types.js";
-import { assertUniqueIds, InputError, parseEvidenceList, parsePolicy, parseWaivers } from "./validate.js";
+import { assertUniqueIds, InputError, parseEvidenceList, parseInstant, parsePolicy, parseWaivers } from "./validate.js";
 
 /** Exit codes are the CI contract: a pipeline can tell "no" from "cannot tell". */
-export const EXIT: Record<Verdict | "INPUT_ERROR", number> = {
+export const EXIT: Record<Verdict | "INPUT_ERROR" | "INTERNAL_ERROR", number> = {
   GO: 0,
   NO_GO: 1,
   UNDETERMINED: 2,
   INPUT_ERROR: 3,
+  INTERNAL_ERROR: 4,
 };
 
 const USAGE = `usage: evidence-gate --policy <file> --evidence <file|dir>... --revision <id>
                      [--waivers <file>] [--now <iso-instant>] [--format text|json]
                      [--clock-skew-seconds <n>]
 
-exit codes: 0 GO, 1 NO_GO, 2 UNDETERMINED, 3 invalid input`;
+exit codes: 0 GO, 1 NO_GO, 2 UNDETERMINED, 3 invalid input, 4 internal error`;
 
 export interface Io {
   out: (text: string) => void;
@@ -57,8 +58,9 @@ function loadEvidence(path: string): Evidence[] {
   if (path.endsWith(".jsonl")) {
     return readFileSync(path, "utf8")
       .split("\n")
-      .filter((line) => line.trim() !== "")
       .flatMap((line, i) => {
+        // Blank lines are skipped here, not filtered first, so `i + 1` is the real line number.
+        if (line.trim() === "") return [];
         try {
           return parseEvidenceList(JSON.parse(line), `${path}:${i + 1}`);
         } catch (error) {
@@ -95,8 +97,9 @@ export function run(argv: readonly string[], io: Io): number {
     if (values.format !== "text" && values.format !== "json") {
       throw new InputError('--format must be "text" or "json"');
     }
-    const now = values.now === undefined ? new Date() : new Date(values.now);
-    if (Number.isNaN(now.getTime())) throw new InputError("--now is not a valid instant");
+    // Same rule as every instant in the inputs: an explicit offset, so the verdict cannot
+    // depend on the timezone of the machine running the gate.
+    const now = values.now === undefined ? new Date() : new Date(parseInstant(values.now, "--now"));
     const skew = values["clock-skew-seconds"] === undefined ? undefined : Number(values["clock-skew-seconds"]);
     if (skew !== undefined && (!Number.isFinite(skew) || skew < 0)) {
       throw new InputError("--clock-skew-seconds must be a non-negative number");
@@ -115,10 +118,16 @@ export function run(argv: readonly string[], io: Io): number {
     io.out(values.format === "json" ? JSON.stringify(report, null, 2) : renderText(report));
     return EXIT[report.verdict];
   } catch (error) {
-    // Malformed input is its own outcome. It must never be mistaken for a verdict.
     const message = error instanceof Error ? error.message : String(error);
-    io.err(`evidence-gate: ${message}\n\n${USAGE}`);
-    return EXIT.INPUT_ERROR;
+    const code = error instanceof Error && "code" in error ? String(error.code) : "";
+    if (error instanceof InputError || code.startsWith("ERR_PARSE_ARGS")) {
+      // Malformed input is its own outcome. It must never be mistaken for a verdict.
+      io.err(`evidence-gate: ${message}\n\n${USAGE}`);
+      return EXIT.INPUT_ERROR;
+    }
+    // Anything else is a bug in this tool, and must not be reported as the caller's mistake.
+    io.err(`evidence-gate: internal error: ${message}`);
+    return EXIT.INTERNAL_ERROR;
   }
 }
 

@@ -1,11 +1,16 @@
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 import { evaluate } from "../src/evaluate.js";
+import { InputError } from "../src/validate.js";
 import type { Evidence, Policy, Requirement, Waiver } from "../src/types.js";
 
 const REV = "4be1c02";
 const NOW = new Date("2026-03-02T12:00:00Z");
 
 let counter = 0;
+// Ids restart for every test, so no test depends on which tests ran before it.
+beforeEach(() => {
+  counter = 0;
+});
 function ev(partial: Partial<Evidence> & Pick<Evidence, "kind" | "outcome">): Evidence {
   counter += 1;
   return {
@@ -235,9 +240,51 @@ describe("waivers", () => {
     const other = { ...waiver, revision: "9d07a3e" };
     expect(judge(single(), [ev({ kind: "ci.tests", outcome: "fail" })], [other]).verdict).toBe("NO_GO");
   });
+
+  it("is rejected when it names a requirement the policy does not have", () => {
+    const stray = { ...waiver, requirementId: "typo" };
+    expect(() => judge(single(), [], [stray])).toThrow(InputError);
+    expect(() => judge(single(), [], [stray])).toThrow(/unknown requirement "typo"/);
+  });
+
+  it("is rejected on a requirement the gate negates, where 'treat as met' would block", () => {
+    const freeze: Policy = {
+      version: 1,
+      name: "t",
+      requirements: [{ id: "r", description: "d", kind: "calendar.release-freeze" }],
+      gate: { all: [{ not: { req: "r" } }] },
+    };
+    expect(() => judge(freeze, [], [waiver])).toThrow(/negated by the gate/);
+  });
+
+  it("reports the longest-lasting waiver, whatever order waivers are given in", () => {
+    const short = { ...waiver, approvedBy: "ana", expiresAt: "2026-03-02T18:00:00Z" };
+    const long = { ...waiver, approvedBy: "bo", expiresAt: "2026-03-04T00:00:00Z" };
+    const failing = [ev({ kind: "ci.tests", outcome: "fail" })];
+    const forward = judge(single(), failing, [short, long]);
+    const backward = judge(single(), failing, [long, short]);
+    expect(forward.requirements[0]?.waiver?.approvedBy).toBe("bo");
+    expect(backward).toEqual(forward);
+  });
 });
 
 describe("reproducibility", () => {
+  it("includes the clock-skew allowance in the digest, because it can change the verdict", () => {
+    const nearFuture = ev({ kind: "ci.tests", outcome: "pass", observedAt: "2026-03-02T12:03:00Z" });
+    const run = (clockSkewSeconds: number) =>
+      evaluate({ policy: single(), evidence: [nearFuture], revision: REV, now: NOW, clockSkewSeconds });
+    expect(run(300).verdict).toBe("GO");
+    expect(run(0).verdict).toBe("UNDETERMINED");
+    expect(run(300).inputsDigest).not.toBe(run(0).inputsDigest);
+  });
+
+  it("orders ids by code unit, not by the machine's locale", () => {
+    // Locale-aware collation puts "ä" before "z"; code-unit order puts it after.
+    const a = ev({ kind: "ci.tests", outcome: "pass", id: "ev-ä", source: "s1" });
+    const z = ev({ kind: "ci.tests", outcome: "pass", id: "ev-z", source: "s2" });
+    expect(judge(single(), [a, z]).requirements[0]?.basis).toEqual(["ev-z", "ev-ä"]);
+  });
+
   it("produces the same digest for the same inputs in any order", () => {
     const items = [ev({ kind: "ci.tests", outcome: "pass" }), ev({ kind: "ci.tests", outcome: "pass", source: "x" })];
     expect(judge(single(), items).inputsDigest).toBe(judge(single(), [...items].reverse()).inputsDigest);

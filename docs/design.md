@@ -66,15 +66,35 @@ a requirement that turned out not to matter does not mark the release as waived.
 
 A waiver is bound to one revision. Shipping a new commit means the risk has to be accepted again.
 
+Two waivers are rejected as input errors. One names a requirement the policy does not have: a
+waiver that silently applies to nothing is a typo waiting to be trusted. The other targets a
+requirement that sits under a `not` in the gate: "treat as met" there would turn a passing release
+into a blocked one, which is never what the person granting it meant.
+
+If several waivers apply to the same requirement, the one that expires last is the one reported,
+regardless of the order they were supplied in.
+
 ## Reproducibility
 
 `inputsDigest` is the SHA-256 of a canonical serialization (sorted object keys, evidence sorted by
-id) of the policy, the revision, the evidence and the waivers. Two evaluations with the same
+id) of the policy, the revision, the evidence, the waivers and the clock-skew allowance. Sorting
+uses code-unit order, never locale-aware comparison, so the digest is the same on every machine. Two evaluations with the same
 digest and the same `evaluatedAt` produce the same report. Storing the digest next to a release
 record makes it possible to show later exactly which inputs a decision was made from.
 
 The digest covers all supplied evidence, including records that were set aside, because what was
 set aside is part of what the evaluator was shown.
+
+## Strict inputs
+
+Every parser rejects keys it does not recognise. Leniency is the wrong default here: an ignored
+key in a policy is a rule that was written down and never applied, and the result is a gate that
+passes more easily than its author believes. The cost is that a collector cannot attach extra
+fields to evidence; free text goes in `detail`.
+
+The CLI separates three kinds of non-verdict. Bad input exits `3`. A bug in the tool exits `4`, so
+it is never reported as the caller's mistake. Neither can be confused with `NO_GO` or
+`UNDETERMINED`.
 
 ## What a production version would add
 

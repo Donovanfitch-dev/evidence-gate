@@ -16,6 +16,18 @@ function record(value: unknown, path: string): Record<string, unknown> {
   return value;
 }
 
+/**
+ * Unknown keys are rejected, never ignored. A misspelled `minDistinctActors` would otherwise
+ * drop the rule it was meant to add, and the gate would pass by saying nothing.
+ */
+function onlyKeys(obj: Record<string, unknown>, allowed: readonly string[], path: string): void {
+  for (const key of Object.keys(obj)) {
+    if (!allowed.includes(key)) {
+      throw new InputError(`${path}: unknown key "${key}" (allowed: ${allowed.join(", ")})`);
+    }
+  }
+}
+
 function text(obj: Record<string, unknown>, key: string, path: string): string {
   const value = obj[key];
   if (typeof value !== "string" || value.trim() === "") {
@@ -39,15 +51,20 @@ function positiveInt(obj: Record<string, unknown>, key: string, path: string): n
 
 /** An instant must carry an explicit offset; local times are ambiguous evidence. */
 function instant(obj: Record<string, unknown>, key: string, path: string): string {
-  const value = text(obj, key, path);
+  return parseInstant(text(obj, key, path), `${path}.${key}`);
+}
+
+/** Validates one instant string. `label` names where it came from, for the error message. */
+export function parseInstant(value: string, label: string): string {
   if (!ISO_INSTANT.test(value) || Number.isNaN(Date.parse(value))) {
-    throw new InputError(`${path}.${key}: expected an ISO-8601 instant with a UTC offset, got "${value}"`);
+    throw new InputError(`${label}: expected an ISO-8601 instant with a UTC offset, got "${value}"`);
   }
   return value;
 }
 
 function parseRequirement(raw: unknown, path: string): Requirement {
   const obj = record(raw, path);
+  onlyKeys(obj, ["id", "description", "kind", "maxAgeMinutes", "minDistinctActors", "onConflict"], path);
   const requirement: Requirement = {
     id: text(obj, "id", path),
     description: text(obj, "description", path),
@@ -93,6 +110,7 @@ function parseGate(raw: unknown, path: string, known: ReadonlySet<string>): Gate
 
 export function parsePolicy(raw: unknown): Policy {
   const obj = record(raw, "policy");
+  onlyKeys(obj, ["version", "name", "requirements", "gate"], "policy");
   if (obj["version"] !== 1) throw new InputError("policy.version: only version 1 is supported");
   const rawRequirements = obj["requirements"];
   if (!Array.isArray(rawRequirements) || rawRequirements.length === 0) {
@@ -116,6 +134,7 @@ export function parsePolicy(raw: unknown): Policy {
 
 export function parseEvidence(raw: unknown, path = "evidence"): Evidence {
   const obj = record(raw, path);
+  onlyKeys(obj, ["id", "kind", "revision", "outcome", "observedAt", "source", "actor", "detail"], path);
   const outcome = obj["outcome"];
   if (outcome !== "pass" && outcome !== "fail") {
     throw new InputError(`${path}.outcome: expected "pass" or "fail"`);
@@ -154,6 +173,7 @@ export function parseWaivers(raw: unknown): Waiver[] {
   return raw.map((item, i) => {
     const path = `waivers[${i}]`;
     const obj = record(item, path);
+    onlyKeys(obj, ["requirementId", "revision", "reason", "approvedBy", "expiresAt"], path);
     return {
       requirementId: text(obj, "requirementId", path),
       revision: text(obj, "revision", path),

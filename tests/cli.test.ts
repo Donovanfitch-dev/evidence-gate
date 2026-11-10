@@ -1,4 +1,4 @@
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -75,6 +75,42 @@ describe("cli input errors are never mistaken for a verdict", () => {
     const result = invoke([...base, "--evidence", file]);
     expect(result.code).toBe(EXIT.INPUT_ERROR);
     expect(result.err).toContain("outcome");
+  });
+
+  it("exits 3, not 0, when a policy key is misspelled", () => {
+    // With one approval this policy is UNDETERMINED. Misspelling the two-person rule must not
+    // quietly remove it and turn the verdict into GO.
+    const policy = JSON.parse(readFileSync("examples/policy.json", "utf8")) as {
+      requirements: Record<string, unknown>[];
+    };
+    const review = policy.requirements.find((r) => r["id"] === "review-approved");
+    if (review === undefined) throw new Error("fixture changed");
+    delete review["minDistinctActors"];
+    review["minDistinctActor"] = 2;
+    const file = join(mkdtempSync(join(tmpdir(), "evidence-gate-")), "policy.json");
+    writeFileSync(file, JSON.stringify(policy));
+    const result = invoke(["--policy", file, ...base.slice(2), "--evidence", "examples/evidence/go.json"]);
+    expect(result.code).toBe(EXIT.INPUT_ERROR);
+    expect(result.err).toContain('unknown key "minDistinctActor"');
+  });
+
+  it("exits 3 for a --now with no UTC offset, so the verdict cannot depend on the local timezone", () => {
+    const result = invoke([...base.slice(0, 4), "--now", "2026-03-02T12:00:00", "--evidence", "examples/evidence/go.json"]);
+    expect(result.code).toBe(EXIT.INPUT_ERROR);
+    expect(result.err).toContain("UTC offset");
+  });
+
+  it("reports the real line number of a bad JSONL record, counting blank lines", () => {
+    const file = join(mkdtempSync(join(tmpdir(), "evidence-gate-")), "e.jsonl");
+    const good = JSON.stringify({ id: "1", kind: "ci.tests", revision: "4be1c02", outcome: "pass", observedAt: "2026-03-02T11:30:00Z", source: "s" });
+    writeFileSync(file, [good, "", "{not json", ""].join("\n"));
+    const result = invoke([...base, "--evidence", file]);
+    expect(result.code).toBe(EXIT.INPUT_ERROR);
+    expect(result.err).toContain(`${file}:3: not valid JSON`);
+  });
+
+  it("exits 3 for an unknown flag", () => {
+    expect(invoke([...base, "--evidence", "examples/evidence/go.json", "--force"]).code).toBe(EXIT.INPUT_ERROR);
   });
 
   it("exits 3 for an invalid --now", () => {
